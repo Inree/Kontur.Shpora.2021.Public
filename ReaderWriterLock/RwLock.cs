@@ -6,26 +6,39 @@ namespace ReaderWriterLock
 {
     public class RwLock : IRwLock
     {
-        private long changers = 0;
-        private long writerBit = 1L << (sizeof(long) * 8 - 2);
+        private int readersCount;
+        private int writersCount;
+        private readonly object readWriteLocker = new object();
         
         public void ReadLocked(Action action)
         {
-            if (Interlocked.Increment(ref changers) >= writerBit)
-                while (changers >= writerBit) {}
-            
+            lock (readWriteLocker)
+            {
+                while (writersCount > 0)
+                    Monitor.Wait(readWriteLocker);
+                Interlocked.Increment(ref readersCount);
+            }
             action();
-            
-            Interlocked.Decrement(ref changers);
+            PassIfZero(Interlocked.Decrement(ref readersCount));
         }
 
         public void WriteLocked(Action action)
         {
-            while (Interlocked.CompareExchange(ref changers, writerBit, 0) != 0) {}
-            
+            lock (readWriteLocker)
+            {
+                while (readersCount + writersCount > 0)
+                    Monitor.Wait(readWriteLocker);
+                Interlocked.Increment(ref writersCount);
+            }
             action();
-            
-            Interlocked.Add(ref changers, -writerBit);
+            PassIfZero(Interlocked.Decrement(ref writersCount));
+        }
+
+        private void PassIfZero(int value)
+        {
+            if (value != 0) return;
+            lock (readWriteLocker)
+                Monitor.PulseAll(readWriteLocker);
         }
     }
 }
